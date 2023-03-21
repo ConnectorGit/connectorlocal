@@ -1,4 +1,4 @@
-# connector-local
+# connectorlocal
 
 Python library for interfacing with Connector Shades
 
@@ -12,7 +12,7 @@ This library is primarly writen to be used with HomeAssistant but can also be us
 
 Use pip:
 
-```$ pip install connector_local```
+```$ pip install connectorlocal```
 
 
 
