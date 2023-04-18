@@ -1,6 +1,6 @@
 """This module implements the interface to Connector Hub.
 
-:copyright: (c) 2020 Connector.
+:copyright: (c) 2023 Connector.
 :license: MIT, see LICENSE for more details.
 """
 
@@ -8,8 +8,9 @@ import datetime
 import json
 import logging
 import socket
-from threading import Thread
+from threading import Thread, Timer
 from Cryptodome.Cipher import AES
+import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 BLINDSDEVICETYPE = ["10000000", "10000002", "10000011"]
@@ -30,6 +31,10 @@ def get_msgid():
     return msgid
 
 
+async def delay(seconds):
+    await asyncio.sleep(seconds)
+
+
 class ConnectorHub:
     """Main class."""
 
@@ -48,6 +53,9 @@ class ConnectorHub:
         self._isconnected = False
         self._errorcode = 1000
         self._test = 10
+        self._need_read_devicelist = []
+        self._readdevicelist_havedone = False
+        self._have_readdevice_thread = False
 
     def _join_group_control(self):
         """Use it to join Group Control."""
@@ -97,13 +105,15 @@ class ConnectorHub:
                     msg_type = data_json["msgType"]
                     if "actionResult" in data_json:
                         if data_json["actionResult"] == "AccessToken error":
-                            self._isconnected = False
                             self._errorcode = 1001
                             break
                     if msg_type == "Report":
                         self._report(data_json)
                     elif msg_type == "GetDeviceListAck":
-                        self._get_devicelist_ack(data_json)
+                        t = Thread(
+                            target=self._get_devicelist_ack, kwargs={"data": data_json}
+                        )
+                        t.start()
                     elif msg_type == "ReadDeviceAck":
                         self._read_deviceack(data_json)
                     elif msg_type == "WriteDeviceAck":
@@ -128,6 +138,8 @@ class ConnectorHub:
             self._isconnected = False
             self._errorcode = 1002
             _LOGGER.warning("Send port is occupied")
+        except AttributeError:
+            _LOGGER.warning("Socket object is none")
 
     def _get_devicelist_ack(self, data):
         """Deal with GetDeviceListAck message."""
@@ -142,7 +154,7 @@ class ConnectorHub:
         else:
             self._device_list[data["mac"]] = Hub(
                 mac=data["mac"],
-                version=data["ProtocolVersion"],
+                version=data["fwVersion"],
                 token=data["token"],
                 access_token=self._accesstoken,
                 devicetype=data["deviceType"],
@@ -150,7 +162,23 @@ class ConnectorHub:
             )
         for item in data["data"]:
             if item["deviceType"] in BLINDSDEVICETYPE:
+                self._need_read_devicelist.append(item)
+        if not self._have_readdevice_thread:
+            t = Timer(3, self.read_devicelist)
+            t.start()
+            self._have_readdevice_thread = True
+
+    def read_devicelist(self):
+        count = 0
+        while len(self._need_read_devicelist) != 0 and count < 3:
+            for item in self._need_read_devicelist:
                 self._get_device_info(mac=item["mac"], devicetype=item["deviceType"])
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(delay(0.5))
+                loop.close()
+            count += 1
+        self._readdevicelist_havedone = True
 
     def _read_deviceack(self, data):
         """Deal with ReadDeviceAck message."""
@@ -161,6 +189,13 @@ class ConnectorHub:
         """Deal with WriteDeviceAck message"""
         hub_mac = data["mac"][:12]
         self._device_list[hub_mac].add_blinds(data)
+        if self._need_read_devicelist:
+            try:
+                self._need_read_devicelist.remove(
+                    {"mac": data["mac"], "deviceType": data["deviceType"]}
+                )
+            except ValueError:
+                _LOGGER.warning("Remove device not in list")
 
     def _report(self, data):
         """return the hub mac."""
@@ -178,13 +213,18 @@ class ConnectorHub:
                 if data["data"]["wirelessMode"] in TWOWAYWIRELESSMODE:
                     current_position = data["data"]["currentPosition"]
                     current_angle = data["data"]["currentAngle"]
-                    self._device_list[hub_mac].blinds[blind_mac].set_angle(
-                        current_angle
-                    )
-                    self._device_list[hub_mac].blinds[blind_mac].set_position(
-                        current_position
-                    )
-                    self._device_list[hub_mac].blinds[blind_mac].run_callback()
+                    try:
+                        self._device_list[hub_mac].blinds_list[blind_mac].set_angle(
+                            current_angle
+                        )
+                        self._device_list[hub_mac].blinds_list[blind_mac].set_position(
+                            current_position
+                        )
+                        self._device_list[hub_mac].blinds_list[blind_mac].run_callback()
+                    except KeyError:
+                        _LOGGER.warning(
+                            "This motor is a newly added motor in the APP and is not synchronized to HA"
+                        )
 
     def _get_device_info(self, mac, devicetype):
         """Get device info."""
@@ -224,9 +264,13 @@ class ConnectorHub:
         data = {"msgType": "GetDeviceList", "msgID": get_msgid()}
         self._send_data(data)
 
-    def device_list(self):
+    async def device_list(self):
         """Return the device list."""
-        return self._device_list
+        for i in range(20):
+            if self._readdevicelist_havedone:
+                return self._device_list
+            await asyncio.sleep(1)
+        return None
 
     @property
     def is_connected(self):
@@ -304,6 +348,10 @@ class Hub:
         for device in self._blinds.values():
             if device.wireless_mode in TWOWAYWIRELESSMODE:
                 device.update_state()
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(delay(0.5))
+                loop.close()
 
 
 class OneWayBlind:
@@ -510,6 +558,5 @@ class TwoWayBlind:
     def run_callback(self):
         """run the call back function."""
         if self._callback is None:
-            _LOGGER.warning("This %s two way blind not register callback function"%(self._mac))
             return
         self._callback()

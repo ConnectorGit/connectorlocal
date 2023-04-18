@@ -105,7 +105,6 @@ class ConnectorHub:
                     msg_type = data_json["msgType"]
                     if "actionResult" in data_json:
                         if data_json["actionResult"] == "AccessToken error":
-                            self._isconnected = False
                             self._errorcode = 1001
                             break
                     if msg_type == "Report":
@@ -170,14 +169,15 @@ class ConnectorHub:
             self._have_readdevice_thread = True
 
     def read_devicelist(self):
-        while len(self._need_read_devicelist) != 0:
+        count = 0
+        while len(self._need_read_devicelist) != 0 and count < 3:
             for item in self._need_read_devicelist:
                 self._get_device_info(mac=item["mac"], devicetype=item["deviceType"])
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(delay(0.5))
                 loop.close()
-
+            count += 1
         self._readdevicelist_havedone = True
 
     def _read_deviceack(self, data):

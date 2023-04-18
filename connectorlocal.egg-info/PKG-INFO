@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: connectorlocal
-Version: 0.1.0
+Version: 0.1.2
 Summary: Python library for interfacing with Connector Shades
 Home-page: https://github.com/ConnectorGit/connectorlocal
 Author: Lucas
@@ -22,7 +22,7 @@ Requires-Python: >=3.6
 Description-Content-Type: text/markdown
 License-File: LICENSE
 
-# connector-local
+# connectorlocal
 
 Python library for interfacing with Connector Shades
 
@@ -36,7 +36,7 @@ This library is primarly writen to be used with HomeAssistant but can also be us
 
 Use pip:
 
-```$ pip install connector_local```
+```$ pip install connectorlocal```
 
 
 
@@ -203,6 +203,4 @@ blinds.target_angle(angle = 90)
 | 22000000   | Wi-Fi Curtain       |
 | 22000002   | Wi-Fi tubular motor |
 | 22000005   | Wi-Fi receiver      |
-
-
 
